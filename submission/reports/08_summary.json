@@ -1,0 +1,18 @@
+{
+  "verdict": {
+    "decision": "Release",
+    "n_errors": 0,
+    "n_warn_images": 13,
+    "n_images": 193,
+    "warn_ratio": 0.0674,
+    "reasons": [
+      "Còn cảnh báo trên 13/193 ảnh (6.7%), dưới ngưỡng."
+    ]
+  },
+  "reviewed": 80,
+  "budget": 80,
+  "seconds": 8.5,
+  "exported": "C:\\Users\\Admin\\OneDrive - Industrial University of HoChiMinh City\\Desktop\\AIthucchien\\K5-L23-Day09-2A202603315-DangThiVanLy-AutoQC-Pipeline-Lab\\submission\\export\\clean_v1",
+  "config_sha1": "2d76848893d62f92a3c35dabb0dde384f214a9e3",
+  "review_sim_sha1": "7988ca22827f780a7043a2300490e679a1697154"
+}
