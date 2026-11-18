@@ -35,5 +35,118 @@ from ..common import ERROR, parse_yolo_line  # noqa: F401
 
 
 def fix(ds, issues, cfg):
-    # TODO
-    raise NotImplementedError("autofix chưa làm")
+    fixes = []
+    drop_codes = {"BAD_FORMAT", "BAD_CLASS_ID", "BOX_ZERO", "DUP_BOX"}
+    lines_to_drop = defaultdict(set)
+    lines_to_clip = defaultdict(dict)
+    images_to_remove = {}
+
+    for issue in issues:
+        if issue.severity != ERROR:
+            continue
+        if issue.code.startswith("DUP_IMAGE_") or issue.code in {
+            "LEAK_TEST", "CORRUPT_IMAGE", "BAD_SIZE"
+        }:
+            images_to_remove[issue.image] = issue
+            continue
+        if issue.code in drop_codes and issue.line is not None:
+            lines_to_drop[issue.image].add(issue.line)
+        elif issue.code == "BOX_OUT_OF_IMAGE" and issue.line is not None:
+            lines_to_clip[issue.image][issue.line] = issue
+
+    stems = (set(lines_to_drop) | set(lines_to_clip)) - set(images_to_remove)
+    for stem in stems:
+        path = ds.label_path(stem)
+        if not path.exists():
+            continue
+
+        original_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        updated_lines = []
+
+        for line_no, original in enumerate(original_lines, start=1):
+            before = original.rstrip("\r\n")
+
+            if line_no in lines_to_drop[stem]:
+                fixes.append({
+                    "image": stem, "line": line_no, "action": "drop_line",
+                    "before": before, "after": "",
+                })
+                continue
+
+            if line_no in lines_to_clip[stem]:
+                cls, cx, cy, width, height = parse_yolo_line(before)
+                x1 = max(0.0, cx - width / 2)
+                y1 = max(0.0, cy - height / 2)
+                x2 = min(1.0, cx + width / 2)
+                y2 = min(1.0, cy + height / 2)
+
+                if x2 <= x1 or y2 <= y1:
+                    fixes.append({
+                        "image": stem, "line": line_no, "action": "drop_line",
+                        "before": before, "after": "",
+                    })
+                    continue
+
+                clipped = (
+                    f"{cls} {(x1 + x2) / 2:.6f} {(y1 + y2) / 2:.6f} "
+                    f"{x2 - x1:.6f} {y2 - y1:.6f}"
+                )
+                ending = "\r\n" if original.endswith("\r\n") else "\n" if original.endswith("\n") else ""
+                updated_lines.append(clipped + ending)
+                fixes.append({
+                    "image": stem, "line": line_no, "action": "clip_box",
+                    "before": before, "after": clipped,
+                })
+                continue
+
+            updated_lines.append(original)
+
+        path.write_text("".join(updated_lines), encoding="utf-8")
+
+    for stem, issue in images_to_remove.items():
+        image_path = ds.image_path(stem)
+        if image_path is None:
+            continue
+
+        label_path = ds.label_path(stem)
+        image_path.unlink()
+        if label_path.exists():
+            label_path.unlink()
+
+        fixes.append({
+            "image": stem,
+            "line": "",
+            "action": "remove_image",
+            "before": image_path.name,
+            "after": "",
+        })
+
+    for issue in issues:
+        if issue.severity != ERROR:
+            continue
+
+        if issue.code == "MISSING_LABEL_FILE" and issue.image not in images_to_remove:
+            fixes.append({
+                "image": issue.image,
+                "line": "",
+                "action": "needs_label",
+                "before": "(không có file)",
+                "after": "chuyển người gán",
+            })
+        elif issue.code == "BAD_CLASS_NAME":
+            path = ds.yaml_path
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            before = data.get("names")
+            data["names"] = cfg["classes"]
+            path.write_text(
+                yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+                encoding="utf-8",
+            )
+            fixes.append({
+                "image": "data.yaml",
+                "line": "",
+                "action": "rename_classes",
+                "before": str(before),
+                "after": str(cfg["classes"]),
+            })
+    return fixes
